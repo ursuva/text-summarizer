@@ -1,4 +1,4 @@
-# RockyBot: News Research Tool 📈
+# Sumifyert: News Research Tool 📈
 
 **RockyBot** is a Retrieval-Augmented Generation (RAG) based news research application that allows users to provide multiple news article URLs and ask questions about their content.
 
