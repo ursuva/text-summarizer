@@ -25,11 +25,11 @@ load_dotenv()
 # ============================================================
 
 st.set_page_config(
-    page_title="RockyBot",
+    page_title="Sumifyer",
     page_icon="📈"
 )
 
-st.title("RockyBot: News Research Tool 📈")
+st.title("Sumifyer: News Research Tool 📈")
 
 
 # ============================================================
