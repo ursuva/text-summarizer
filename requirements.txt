@@ -9,3 +9,5 @@ unstructured
 beautifulsoup4
 requests
 python-dotenv
+Torch
+Torchvision
