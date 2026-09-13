@@ -41,10 +41,13 @@ st.sidebar.title("News Article URLs")
 urls = []
 
 for i in range(3):
+
     url = st.sidebar.text_input(
         f"URL {i + 1}"
     )
+
     urls.append(url)
+
 
 process_url_clicked = st.sidebar.button(
     "Process URLs"
@@ -76,29 +79,138 @@ encoder = load_encoder()
 
 
 # ============================================================
-# GEMINI
+# GEMINI - MULTIPLE API KEYS
 # ============================================================
 
 @st.cache_resource
-def load_llm():
+def load_llms():
 
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_keys = []
 
-    if not api_key:
-        api_key = st.secrets.get("GOOGLE_API_KEY")
+    # ========================================================
+    # 1. Check environment variables
+    # ========================================================
 
-    if not api_key:
-        st.error("GOOGLE_API_KEY is not configured.")
+    for i in range(1, 11):
+
+        key = os.getenv(f"GOOGLE_API_KEY_{i}")
+
+        if key:
+            key = key.strip()
+
+            if key:
+                api_keys.append(key)
+
+
+    # ========================================================
+    # 2. Check Streamlit Secrets
+    # ========================================================
+
+    if not api_keys:
+
+        try:
+
+            for i in range(1, 11):
+
+                key = st.secrets.get(
+                    f"GOOGLE_API_KEY_{i}"
+                )
+
+                if key:
+                    key = key.strip()
+
+                    if key:
+                        api_keys.append(key)
+
+        except Exception:
+            # No local secrets.toml file
+            pass
+
+
+    # ========================================================
+    # 3. Backward compatibility:
+    #    GOOGLE_API_KEY
+    # ========================================================
+
+    if not api_keys:
+
+        key = os.getenv(
+            "GOOGLE_API_KEY"
+        )
+
+        if key:
+            key = key.strip()
+
+            if key:
+                api_keys.append(key)
+
+
+    # ========================================================
+    # 4. Check single key in Streamlit Secrets
+    # ========================================================
+
+    if not api_keys:
+
+        try:
+
+            key = st.secrets.get(
+                "GOOGLE_API_KEY"
+            )
+
+            if key:
+                key = key.strip()
+
+                if key:
+                    api_keys.append(key)
+
+        except Exception:
+            pass
+
+
+    # ========================================================
+    # 5. Stop if no API key exists
+    # ========================================================
+
+    if not api_keys:
+
+        st.error(
+            "No Gemini API keys configured. "
+            "Add GOOGLE_API_KEY_1, GOOGLE_API_KEY_2, etc."
+        )
+
         st.stop()
 
-    return ChatGoogleGenerativeAI(
-        model="gemini-3.6-flash",
-        api_key=api_key,
-        max_tokens=500
-    )
+
+    # ========================================================
+    # 6. Create Gemini LLM for every key
+    # ========================================================
+
+    llms = []
+
+    for key in api_keys:
+
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-3.6-flash",
+            api_key=key,
+            max_tokens=500
+        )
+
+        llms.append(llm)
 
 
-llm = load_llm()
+    return llms
+
+
+llms = load_llms()
+
+
+# ============================================================
+# API KEY STATE
+# ============================================================
+
+if "active_key_index" not in st.session_state:
+
+    st.session_state.active_key_index = 0
 
 
 # ============================================================
@@ -131,7 +243,114 @@ Context:
 ])
 
 
-chain = prompt | llm
+# ============================================================
+# CREATE GEMINI CHAINS
+# ============================================================
+
+chains = []
+
+for llm in llms:
+
+    chains.append(
+        prompt | llm
+    )
+
+
+# ============================================================
+# GEMINI FALLBACK FUNCTION
+# ============================================================
+
+def invoke_with_fallback(payload):
+
+    total_keys = len(chains)
+
+    if total_keys == 0:
+
+        raise RuntimeError(
+            "No Gemini API keys are available."
+        )
+
+
+    # --------------------------------------------------------
+    # Start from the last successful key
+    # --------------------------------------------------------
+
+    start_index = (
+        st.session_state.active_key_index
+        % total_keys
+    )
+
+
+    last_error = None
+
+
+    # --------------------------------------------------------
+    # Try every configured key once
+    # --------------------------------------------------------
+
+    for attempt in range(total_keys):
+
+        key_index = (
+            start_index + attempt
+        ) % total_keys
+
+
+        try:
+
+            # Do not display the actual API key
+            st.info(
+                f"Using Gemini API key {key_index + 1}..."
+            )
+
+
+            response = chains[key_index].invoke(
+                payload
+            )
+
+
+            # ------------------------------------------------
+            # Successful key becomes the active key
+            # ------------------------------------------------
+
+            st.session_state.active_key_index = (
+                key_index
+            )
+
+
+            return response
+
+
+        except Exception as e:
+
+            last_error = e
+
+
+            st.warning(
+                f"Gemini API key {key_index + 1} "
+                f"failed. Trying another key..."
+            )
+
+
+            continue
+
+
+    # --------------------------------------------------------
+    # All keys failed
+    # --------------------------------------------------------
+
+    # Reset to key 1 for the next request.
+    # This allows a previously exhausted key to be retried
+    # later if its quota has replenished.
+    
+    st.session_state.active_key_index = 0
+
+
+    st.error(
+        "All configured Gemini API keys failed."
+    )
+
+
+    raise last_error
 
 
 # ============================================================
@@ -145,6 +364,7 @@ if process_url_clicked:
         for url in urls
         if url.strip()
     ]
+
 
     if not urls:
 
@@ -163,11 +383,14 @@ if process_url_clicked:
         "1️⃣ Loading data..."
     )
 
+
     loader = UnstructuredURLLoader(
         urls=urls
     )
 
+
     data = loader.load()
+
 
     st.success(
         f"Documents loaded: {len(data)}"
@@ -181,6 +404,7 @@ if process_url_clicked:
     main_placeholder.text(
         "2️⃣ Splitting text into chunks..."
     )
+
 
     text_splitter = RecursiveCharacterTextSplitter(
 
@@ -368,9 +592,7 @@ if query:
     # ========================================================
 
     query_vector = encoder.encode(
-
         [query],
-
         convert_to_numpy=True
     )
 
@@ -396,6 +618,7 @@ if query:
         for i in I[0]
 
         if i != -1
+
     ]
 
 
@@ -432,6 +655,7 @@ if query:
         result.page_content
 
         for result in results
+
     )
 
 
@@ -443,7 +667,7 @@ if query:
         "Generating answer..."
     ):
 
-        response = chain.invoke({
+        response = invoke_with_fallback({
 
             "context": context,
 
@@ -481,6 +705,7 @@ if query:
             and block.get(
                 "type"
             ) == "text"
+
         )
 
     else:
@@ -495,6 +720,7 @@ if query:
     st.header(
         "Answer"
     )
+
 
     st.write(
         answer
